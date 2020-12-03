@@ -4,7 +4,7 @@ from json import dumps
 from neuromation.api import get
 
 from .asyncio_utils import run
-from .const import EX_DATAERR, EX_UNAVAILABLE, EX_USAGE
+from .const import EX_UNAVAILABLE, EX_USAGE
 
 
 def error(message: str, exit_code: int) -> None:
@@ -18,19 +18,29 @@ async def async_main(action: str) -> None:
     elif action == "erase":
         print("Please use `neuro logout` instead `docker logout ...`", EX_UNAVAILABLE)
     else:
-        async with get() as client:
-            config = client.config
-            registry = sys.stdin.readline().strip()
-            neuro_registry = config.registry_url.host
-            if registry != neuro_registry:
-                error(
-                    f"Unknown registry {registry}. "
-                    "neuro configured with {neuro_registry}.",
-                    EX_DATAERR,
-                )
-            token = await config.token()
-            payload = {"Username": "token", "Secret": token}
-            print(dumps(payload))
+        registry = sys.stdin.readline().strip()
+        try:
+            async with get() as client:
+                config = client.config
+                neuro_registry = config.registry_url.host
+                if registry != neuro_registry:
+                    print(
+                        f"Unknown registry {registry}. "
+                        f"neuro configured with {neuro_registry}.",
+                        file=sys.stderr,
+                    )
+                    payload = {"Username": "invalid", "Secret": "invalid"}
+                else:
+                    token = await config.token()
+                    payload = {"Username": "token", "Secret": token}
+        except Exception:
+            print(
+                f"Could not resolve correct credentials for {registry}. "
+                f"Please re-login using `neuro login` or switch to related cluster.",
+                file=sys.stderr,
+            )
+            payload = {"Username": "invalid", "Secret": "invalid"}
+        print(dumps(payload))
 
 
 def main() -> None:

@@ -1,0 +1,1 @@
+`neuro config docker` helper now does not raise critical errors, as it can affect docker-compose executions
