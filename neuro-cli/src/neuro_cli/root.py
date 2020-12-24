@@ -96,6 +96,8 @@ class Root:
             self.console = Console(
                 color_system="auto" if self.color else None,
                 force_terminal=self.tty,
+                markup=False,
+                emoji=False,
                 highlight=False,
                 log_path=False,
                 width=2048,
@@ -313,6 +315,9 @@ class Root:
             sys.stdout.flush()
 
     def pager(self) -> PagerContext:
+        if sys.platform == "win32":
+            # Default Windows pager (more) does not support ANSI sequences.
+            return self.console.pager(MaybePager(self.console))
         return self.console.pager(MaybePager(self.console), styles=True, links=True)
 
     def print(self, *objects: Any, err: bool = False, **kwargs: Any) -> None:
