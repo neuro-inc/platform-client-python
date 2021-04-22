@@ -489,5 +489,5 @@ class HeadlessNegotiator(BaseNegotiator):
 async def logout_from_browser(
     config: _AuthConfig, show_browser_cb: Callable[[URL], Awaitable[None]]
 ) -> None:
-    logout_url = config.logout_url.with_query(client_id=config.client_id)
+    logout_url = config.logout_url.update_query(client_id=config.client_id)
     await show_browser_cb(logout_url)
