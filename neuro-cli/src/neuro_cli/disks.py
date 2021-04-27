@@ -49,8 +49,10 @@ async def ls(root: Root, full_uri: bool, long_format: bool) -> None:
         )
 
     disks = []
-    async for disk in root.client.disks.list():
-        disks.append(disk)
+    with root.status("Fetching disks") as status:
+        async for disk in root.client.disks.list():
+            disks.append(disk)
+            status.update(f"Fetching disks ({len(disks)} loaded)")
 
     with root.pager():
         root.print(disks_fmtr(disks))

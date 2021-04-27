@@ -155,9 +155,10 @@ async def list(
         table.add_column()  # URI
         table.add_column()  # Action
 
-        permissions = await root.client.users.get_acl(
-            username, scheme=scheme, uri=uri_obj
-        )
+        with root.status("Fetching permissions"):
+            permissions = await root.client.users.get_acl(
+                username, scheme=scheme, uri=uri_obj
+            )
         for p in sorted(permissions, key=_permission_key):
             table.add_row(uri_fmtr(p.uri), _fmt_action(p.action))
         with root.pager():
@@ -168,9 +169,10 @@ async def list(
         table.add_column()  # Action
         table.add_column()  # User
 
-        shares = await root.client.users.get_shares(
-            username, scheme=scheme, uri=uri_obj
-        )
+        with root.status("Fetching shares"):
+            shares = await root.client.users.get_shares(
+                username, scheme=scheme, uri=uri_obj
+            )
         for share in sorted(shares, key=_shared_permission_key):
             table.add_row(
                 uri_fmtr(share.permission.uri),

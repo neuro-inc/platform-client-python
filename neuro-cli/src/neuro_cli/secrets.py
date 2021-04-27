@@ -38,8 +38,10 @@ async def ls(root: Root, full_uri: bool) -> None:
         )
 
     secrets = []
-    async for secret in root.client.secrets.list():
-        secrets.append(secret)
+    with root.status("Fetching secrets") as status:
+        async for secret in root.client.secrets.list():
+            secrets.append(secret)
+            status.update(f"Fetching secrets ({len(secrets)} loaded)")
 
     with root.pager():
         root.print(secrets_fmtr(secrets))

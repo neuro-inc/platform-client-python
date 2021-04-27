@@ -114,7 +114,8 @@ async def ls(root: Root, format_long: bool, full_uri: bool) -> None:
     List images.
     """
 
-    images = await root.client.images.ls()
+    with root.status("Fetching images"):
+        images = await root.client.images.ls()
 
     image_fmtr: ImageFormatter
     if full_uri:
@@ -152,7 +153,10 @@ async def tags(root: Root, format_long: bool, image: RemoteImage) -> None:
     neuro image tags -l image:myimage
     """
 
-    tags_list = [Tag(name=str(img.tag)) for img in await root.client.images.tags(image)]
+    with root.status(f"Fetching tags for image [b]{image}[/b]"):
+        tags_list = [
+            Tag(name=str(img.tag)) for img in await root.client.images.tags(image)
+        ]
 
     formatter: BaseTagsFormatter
     if format_long:

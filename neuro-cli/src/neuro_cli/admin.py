@@ -37,7 +37,8 @@ async def get_clusters(root: Root) -> None:
     Print the list of available clusters.
     """
     fmt = ClustersFormatter()
-    clusters = await root.client._admin.list_clusters()
+    with root.status("Fetching the list of clusters"):
+        clusters = await root.client._admin.list_clusters()
     with root.pager():
         root.print(fmt(clusters.values()))
 
@@ -254,7 +255,11 @@ async def get_cluster_users(root: Root, cluster_name: Optional[str]) -> None:
     Print the list of all users in the cluster with their assigned role.
     """
     fmt = ClusterUserFormatter()
-    clusters = await root.client._admin.list_cluster_users(cluster_name)
+    cluster_name = cluster_name or root.client.config.cluster_name
+    with root.status(
+        f"Fetching the list of cluster users of cluster [b]cluster_name[/b]"
+    ):
+        clusters = await root.client._admin.list_cluster_users(cluster_name)
     with root.pager():
         root.print(fmt(clusters))
 

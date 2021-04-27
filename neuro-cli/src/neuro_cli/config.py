@@ -234,8 +234,9 @@ async def get_clusters(root: Root) -> None:
     Fetch and display the list of available clusters.
 
     """
-    root.print("Fetch the list of available clusters...", style="dim")
-    await root.client.config.fetch()
+
+    with root.status("Fetching the list of available clusters"):
+        await root.client.config.fetch()
     fmt = ClustersFormatter()
     with root.pager():
         root.print(
@@ -252,8 +253,8 @@ async def switch_cluster(root: Root, cluster_name: Optional[str]) -> None:
     name is omitted (default).
 
     """
-    root.print("Fetch the list of available clusters...", style="dim")
-    await root.client.config.fetch()
+    with root.status("Fetching the list of available clusters"):
+        await root.client.config.fetch()
     if cluster_name is None:
         if not root.tty:
             raise click.BadArgumentUsage(

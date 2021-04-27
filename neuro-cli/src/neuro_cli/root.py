@@ -22,8 +22,12 @@ from typing import (
 
 import aiohttp
 import click
-from rich.console import Console, PagerContext
+from rich.console import Console, PagerContext, RenderableType
 from rich.pager import Pager
+from rich.spinner import Spinner
+from rich.status import Status as RichStatus
+from rich.style import StyleType
+from rich.text import Text as RichText
 
 from neuro_sdk import Client, ConfigError, Factory, gen_trace_id
 from neuro_sdk.config import _ConfigData, load_user_config
@@ -58,6 +62,33 @@ class MaybePager(Pager):
             click.echo_via_pager(content)
         else:
             print(content, end="")
+
+
+class Status(RichStatus):
+    # Patched version of library class, avoid spinner animation
+    # reset on updates that do not change spinner style
+
+    def update(
+        self,
+        status: Optional[RenderableType] = None,
+        *,
+        spinner: Optional[str] = None,
+        spinner_style: Optional[StyleType] = None,
+        speed: Optional[float] = None,
+    ) -> None:
+        if status is not None:
+            self.status = status
+        if spinner is not None:
+            self.spinner = spinner
+        if spinner_style is not None:
+            self.spinner_style = spinner_style
+        if speed is not None:
+            self.speed = speed
+        if spinner is not None or spinner_style is not None or speed is not None:
+            self._spinner = Spinner(
+                self.spinner, style=self.spinner_style, speed=self.speed
+            )
+        self._live.update(self.renderable, refresh=True)
 
 
 @dataclass
@@ -314,6 +345,17 @@ class Root:
             # to a part of the screen size
             sys.stdout.write("\x1b[!p")
             sys.stdout.flush()
+
+    @contextlib.contextmanager
+    def status(self, message: str) -> Iterator[Status]:
+        status = Status(
+            RichText.from_markup(message), console=self.console, spinner="dots"
+        )
+        if self.verbosity >= 0:
+            with status:
+                yield status
+        else:
+            yield status
 
     def pager(self) -> PagerContext:
         return self.console.pager(MaybePager(self.console), styles=True, links=True)
