@@ -109,12 +109,36 @@ async def pull(root: Root, remote_image: str, local_image: Optional[str]) -> Non
 @command()
 @option("-l", "format_long", is_flag=True, help="List in long format.")
 @option("--full-uri", is_flag=True, help="Output full image URI.")
-async def ls(root: Root, format_long: bool, full_uri: bool) -> None:
+@option(
+    "-o",
+    "--owner",
+    multiple=True,
+    help="Filter out images by owner (multiple option). "
+    "Supports `ME` option to filter by the current user.",
+    secure=True,
+)
+@option("-n", "--name", metavar="NAME", help="Filter out images by name.", secure=True)
+async def ls(
+    root: Root,
+    format_long: bool,
+    full_uri: bool,
+    owner: Sequence[str],
+    name: Optional[str],
+) -> None:
     """
     List images.
     """
 
     images = await root.client.images.ls()
+
+    if owner:
+        owners = set(owner)
+        if "ME" in owners:
+            owners.remove("ME")
+            owners.add(root.client.config.username)
+        images = [image for image in images if image.owner in owners]
+    if name:
+        images = [image for image in images if image.name == name]
 
     image_fmtr: ImageFormatter
     if full_uri:
