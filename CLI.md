@@ -1263,6 +1263,8 @@ Name | Description|
 |_--help_|Show this message and exit.|
 |_-l_|List in long format.|
 |_\--full-uri_|Output full image URI.|
+|_\-n, --name NAME_|Filter out images by name.|
+|_\-o, --owner TEXT_|Filter out images by owner \(multiple option). Supports `ME` option to filter by the current user.|
 
 
 
@@ -2822,6 +2824,8 @@ Name | Description|
 |_--help_|Show this message and exit.|
 |_-l_|List in long format.|
 |_\--full-uri_|Output full image URI.|
+|_\-n, --name NAME_|Filter out images by name.|
+|_\-o, --owner TEXT_|Filter out images by owner \(multiple option). Supports `ME` option to filter by the current user.|
 
 
 
