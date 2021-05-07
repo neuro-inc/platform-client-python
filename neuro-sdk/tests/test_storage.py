@@ -1985,3 +1985,29 @@ async def test_storage_upload_dir_with_ignore_file_names(
     assert names == [".neuroignore", "nested", "three", "two"]
     names = sorted(os.listdir(storage_path / "folder" / "nested"))
     assert names == [".gitignore", "three"]
+
+
+async def test_storage_upload_dir_with_parent_ignore_file_names(
+    storage_server: Any, make_client: _MakeClient, tmp_path: Path, storage_path: Path
+) -> None:
+    parent_dir = tmp_path / "parent"
+    local_dir = parent_dir / "folder"
+    local_dir2 = local_dir / "nested"
+    local_dir2.mkdir(parents=True)
+    for name in "one", "two", "three":
+        (local_dir / name).write_bytes(b"")
+        (local_dir2 / name).write_bytes(b"")
+    (tmp_path / ".neuroignore").write_text("one")
+    (parent_dir / ".gitignore").write_text("*/two")
+
+    async with make_client(storage_server.make_url("/")) as client:
+        await client.storage.upload_dir(
+            URL(local_dir.as_uri()),
+            URL("storage:folder"),
+            ignore_file_names={".neuroignore", ".gitignore"},
+        )
+
+    names = sorted(os.listdir(storage_path / "folder"))
+    assert names == ["nested", "three"]
+    names = sorted(os.listdir(storage_path / "folder" / "nested"))
+    assert names == ["three", "two"]

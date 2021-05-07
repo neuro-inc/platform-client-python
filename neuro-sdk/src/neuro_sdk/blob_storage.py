@@ -16,8 +16,6 @@ from typing import (
     AbstractSet,
     Any,
     AsyncIterator,
-    Awaitable,
-    Callable,
     Dict,
     List,
     Optional,
@@ -47,13 +45,14 @@ from .abc import (
 from .config import Config
 from .core import _Core
 from .errors import ResourceNotFound
-from .file_filter import FileFilter, translate
+from .file_filter import AsyncFilterFunc, FileFilter, translate
 from .storage import (
     TIME_THRESHOLD,
     _always,
     _has_magic,
     _magic_check,
     _parse_content_range,
+    load_parent_ignore_files,
     run_concurrently,
     run_progress,
 )
@@ -642,12 +641,10 @@ class BlobStorage(metaclass=NoPublicConstructor):
         dst: URL,
         *,
         update: bool = False,
-        filter: Optional[Callable[[str], Awaitable[bool]]] = None,
+        filter: Optional[AsyncFilterFunc] = None,
         ignore_file_names: AbstractSet[str] = frozenset(),
         progress: Optional[AbstractRecursiveFileProgress] = None,
     ) -> None:
-        if filter is None:
-            filter = _always
         src = normalize_local_path_uri(src)
         dst = normalize_blob_path_uri(dst, self._config.cluster_name)
         path = _extract_path(src).resolve()
@@ -655,6 +652,12 @@ class BlobStorage(metaclass=NoPublicConstructor):
             raise FileNotFoundError(errno.ENOENT, "No such file", str(path))
         if not path.is_dir():
             raise NotADirectoryError(errno.ENOTDIR, "Not a directory", str(path))
+
+        if filter is None:
+            filter = _always
+        if ignore_file_names:
+            filter = load_parent_ignore_files(filter, ignore_file_names, path)
+
         async_progress: _AsyncAbstractRecursiveFileProgress
         queue, async_progress = queue_calls(progress)
         await run_progress(
@@ -679,7 +682,7 @@ class BlobStorage(metaclass=NoPublicConstructor):
         rel_path: str,
         *,
         update: bool,
-        filter: Callable[[str], Awaitable[bool]],
+        filter: AsyncFilterFunc,
         ignore_file_names: AbstractSet[str],
         progress: _AsyncAbstractRecursiveFileProgress,
     ) -> None:
@@ -852,7 +855,7 @@ class BlobStorage(metaclass=NoPublicConstructor):
         *,
         update: bool = False,
         continue_: bool = False,
-        filter: Optional[Callable[[str], Awaitable[bool]]] = None,
+        filter: Optional[AsyncFilterFunc] = None,
         progress: Optional[AbstractRecursiveFileProgress] = None,
     ) -> None:
         if filter is None:
@@ -883,7 +886,7 @@ class BlobStorage(metaclass=NoPublicConstructor):
         *,
         update: bool,
         continue_: bool,
-        filter: Callable[[str], Awaitable[bool]],
+        filter: AsyncFilterFunc,
         progress: _AsyncAbstractRecursiveFileProgress,
     ) -> None:
         dst_path.mkdir(parents=True, exist_ok=True)

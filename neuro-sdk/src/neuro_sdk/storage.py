@@ -48,7 +48,7 @@ from .abc import (
 from .config import Config
 from .core import _Core
 from .errors import ResourceNotFound
-from .file_filter import FileFilter
+from .file_filter import AsyncFilterFunc, FileFilter
 from .url_utils import (
     _extract_path,
     normalize_local_path_uri,
@@ -537,12 +537,10 @@ class Storage(metaclass=NoPublicConstructor):
         *,
         update: bool = False,
         continue_: bool = False,
-        filter: Optional[Callable[[str], Awaitable[bool]]] = None,
+        filter: Optional[AsyncFilterFunc] = None,
         ignore_file_names: AbstractSet[str] = frozenset(),
         progress: Optional[AbstractRecursiveFileProgress] = None,
     ) -> None:
-        if filter is None:
-            filter = _always
         src = normalize_local_path_uri(src)
         dst = normalize_storage_path_uri(
             dst, self._config.username, self._config.cluster_name
@@ -552,6 +550,12 @@ class Storage(metaclass=NoPublicConstructor):
             raise FileNotFoundError(errno.ENOENT, "No such file", str(path))
         if not path.is_dir():
             raise NotADirectoryError(errno.ENOTDIR, "Not a directory", str(path))
+
+        if filter is None:
+            filter = _always
+        if ignore_file_names:
+            filter = load_parent_ignore_files(filter, ignore_file_names, path)
+
         async_progress: _AsyncAbstractRecursiveFileProgress
         queue, async_progress = queue_calls(progress)
         await run_progress(
@@ -578,7 +582,7 @@ class Storage(metaclass=NoPublicConstructor):
         *,
         update: bool,
         continue_: bool,
-        filter: Callable[[str], Awaitable[bool]],
+        filter: AsyncFilterFunc,
         ignore_file_names: AbstractSet[str],
         progress: _AsyncAbstractRecursiveFileProgress,
     ) -> None:
@@ -744,7 +748,7 @@ class Storage(metaclass=NoPublicConstructor):
         *,
         update: bool = False,
         continue_: bool = False,
-        filter: Optional[Callable[[str], Awaitable[bool]]] = None,
+        filter: Optional[AsyncFilterFunc] = None,
         progress: Optional[AbstractRecursiveFileProgress] = None,
     ) -> None:
         if filter is None:
@@ -780,7 +784,7 @@ class Storage(metaclass=NoPublicConstructor):
         *,
         update: bool,
         continue_: bool,
-        filter: Callable[[str], Awaitable[bool]],
+        filter: AsyncFilterFunc,
         progress: _AsyncAbstractRecursiveFileProgress,
     ) -> None:
         dst_path.mkdir(parents=True, exist_ok=True)
@@ -945,3 +949,24 @@ async def run_concurrently(coros: Iterable[Awaitable[Any]]) -> None:
 
 async def _always(path: str) -> bool:
     return True
+
+
+def load_parent_ignore_files(
+    filter: AsyncFilterFunc,
+    ignore_file_names: AbstractSet[str],
+    path: Path,
+    rel_path: str = "",
+) -> AsyncFilterFunc:
+    if path == path.parent:
+        return filter
+    rel_path = f"{path.name}/{rel_path}"
+    path = path.parent
+    filter = load_parent_ignore_files(filter, ignore_file_names, path, rel_path)
+    for name in ignore_file_names:
+        config_path = path / name
+        if config_path.exists():
+            log.debug(f"Load ignore file {str(config_path)!r}")
+            file_filter = FileFilter(filter)
+            file_filter.read_from_file(config_path, "", rel_path)
+            filter = file_filter.match
+    return filter

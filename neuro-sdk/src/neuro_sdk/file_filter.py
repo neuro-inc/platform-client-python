@@ -2,19 +2,21 @@ import re
 from pathlib import Path
 from typing import Any, Awaitable, Callable, List, Tuple, cast
 
+AsyncFilterFunc = Callable[[str], Awaitable[bool]]
+
 
 async def _always_match(path: str) -> bool:
     return True
 
 
 class FileFilter:
-    def __init__(
-        self, default: Callable[[str], Awaitable[bool]] = _always_match
-    ) -> None:
-        self.filters: List[Tuple[bool, str, Callable[[str], Any]]] = []
+    def __init__(self, default: AsyncFilterFunc = _always_match) -> None:
+        self.filters: List[Tuple[bool, str, str, Callable[[str], Any]]] = []
         self.default = default
 
-    def read_from_buffer(self, data: bytes, prefix: str = "") -> None:
+    def read_from_buffer(
+        self, data: bytes, prefix: str = "", prefix2: str = ""
+    ) -> None:
         lines = data.decode("utf-8-sig").split("\n")
         for line in lines:
             if line and line[-1] == "\r":
@@ -23,18 +25,19 @@ class FileFilter:
                 continue
             line = _strip_trailing_spaces(line)
             if line.startswith("!"):
-                print(f"include {line!r}")
-                self.include(line[1:], prefix=prefix)
+                self.include(line[1:], prefix=prefix, prefix2=prefix2)
             else:
-                print(f"exclude {line!r}")
-                self.exclude(line, prefix=prefix)
+                self.exclude(line, prefix=prefix, prefix2=prefix2)
 
-    def read_from_file(self, path: Path, prefix: str = "") -> None:
+    def read_from_file(self, path: Path, prefix: str = "", prefix2: str = "") -> None:
         with open(path, "rb") as f:
-            self.read_from_buffer(f.read(), prefix)
+            self.read_from_buffer(f.read(), prefix, prefix2)
 
-    def append(self, exclude: bool, pattern: str, prefix: str = "") -> None:
+    def append(
+        self, exclude: bool, pattern: str, prefix: str = "", prefix2: str = ""
+    ) -> None:
         assert not prefix or prefix[-1] == "/"
+        assert not prefix2 or prefix2[-1] == "/"
         if "/" not in pattern.rstrip("/"):
             pattern = "**/" + pattern
         else:
@@ -43,17 +46,17 @@ class FileFilter:
         matcher = cast(
             Callable[[str], Any], re.compile(re_pattern, re.DOTALL).fullmatch
         )
-        self.filters.append((exclude, prefix, matcher))
+        self.filters.append((exclude, prefix, prefix2, matcher))
 
-    def exclude(self, pattern: str, prefix: str = "") -> None:
-        self.append(True, pattern, prefix=prefix)
+    def exclude(self, pattern: str, prefix: str = "", prefix2: str = "") -> None:
+        self.append(True, pattern, prefix=prefix, prefix2=prefix2)
 
-    def include(self, pattern: str, prefix: str = "") -> None:
-        self.append(False, pattern, prefix=prefix)
+    def include(self, pattern: str, prefix: str = "", prefix2: str = "") -> None:
+        self.append(False, pattern, prefix=prefix, prefix2=prefix2)
 
     async def match(self, path: str) -> bool:
-        for exclude, prefix, matcher in reversed(self.filters):
-            if path.startswith(prefix) and matcher(path[len(prefix) :]):
+        for exclude, prefix, prefix2, matcher in reversed(self.filters):
+            if path.startswith(prefix) and matcher(prefix2 + path[len(prefix) :]):
                 return not exclude
         return await self.default(path)
 

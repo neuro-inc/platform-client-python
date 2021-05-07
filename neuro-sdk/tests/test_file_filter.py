@@ -182,3 +182,12 @@ async def test_read_from_buffer() -> None:
     assert await ff.match("base/spam.txt")
     assert not await ff.match("base/ham.txt")
     assert await ff.match("ham.txt")
+
+
+async def test_parent_ignore_file() -> None:
+    ff = FileFilter()
+    ff.exclude("dir/s*", "", "dir/")
+    ff.exclude("/*.txt", "", "dir/")
+    assert not await ff.match("spam.txt")
+    assert await ff.match("ham.txt")
+    assert not await ff.match("spam")

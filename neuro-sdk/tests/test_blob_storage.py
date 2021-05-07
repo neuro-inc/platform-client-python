@@ -1609,6 +1609,39 @@ async def test_storage_upload_dir_with_ignore_file_names(
     ]
 
 
+async def test_storage_upload_dir_with_parent_ignore_file_names(
+    blob_storage_server: Any,
+    make_client: _MakeClient,
+    tmp_path: Path,
+    blob_storage_contents: _ContentsObj,
+) -> None:
+    parent_dir = tmp_path / "parent"
+    local_dir = parent_dir / "folder"
+    local_dir2 = local_dir / "nested"
+    local_dir2.mkdir(parents=True)
+    for name in "one", "two", "three":
+        (local_dir / name).write_bytes(b"")
+        (local_dir2 / name).write_bytes(b"")
+    (tmp_path / ".neuroignore").write_text("one")
+    (parent_dir / ".gitignore").write_text("*/two")
+
+    async with make_client(blob_storage_server.make_url("/")) as client:
+        await client.blob_storage.upload_dir(
+            URL(local_dir.as_uri()),
+            URL("blob:foo/folder"),
+            ignore_file_names={".neuroignore", ".gitignore"},
+        )
+
+    keys = sorted(k for k in blob_storage_contents if k.startswith("folder/"))
+    assert keys == [
+        "folder/",
+        "folder/nested/",
+        "folder/nested/three",
+        "folder/nested/two",
+        "folder/three",
+    ]
+
+
 def add_blob(
     contents: Dict[str, Any], key: str, body: bytes, mtime: Optional[float] = None
 ) -> None:
