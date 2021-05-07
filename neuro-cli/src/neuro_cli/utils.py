@@ -29,6 +29,7 @@ from typing import (
 
 import click
 import humanize
+from aiohttp import ClientResponseError
 from click.types import convert_type
 from yarl import URL
 
@@ -423,6 +424,13 @@ JOB_ID_PATTERN = r"job-[0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{
 async def resolve_job(
     id_or_name_or_uri: str, *, client: Client, status: Set[JobStatus]
 ) -> str:
+    id, _ = await resolve_job_ex(id_or_name_or_uri, client=client, status=status)
+    return id
+
+
+async def resolve_job_ex(
+    id_or_name_or_uri: str, *, client: Client, status: Set[JobStatus]
+) -> Tuple[str, str]:
     default_user = client.username
     default_cluster = client.cluster_name
     if id_or_name_or_uri.startswith("job:"):
@@ -432,32 +440,35 @@ async def resolve_job(
             cluster_name=default_cluster,
             allowed_schemes=("job",),
         )
-        if uri.host != default_cluster:
-            raise ValueError(f"Invalid job URI: cluster_name != '{default_cluster}'")
+        assert uri.host
+        cluster_name = uri.host
         owner, _, id_or_name = uri.path.lstrip("/").partition("/")
         if not owner:
-            raise ValueError(f"Invalid job URI: missing owner")
+            raise ValueError("Invalid job URI: missing owner")
         if not id_or_name:
-            raise ValueError(
-                f"Invalid job URI: owner='{owner}', missing job-id or job-name"
-            )
+            raise ValueError("Invalid job URI: missing job-id or job-name")
     else:
         id_or_name = id_or_name_or_uri
         owner = default_user
+        cluster_name = default_cluster
 
     # Temporary fast path.
     if re.fullmatch(JOB_ID_PATTERN, id_or_name):
-        return id_or_name
+        return id_or_name, cluster_name
 
     try:
         async for job in client.jobs.list(
-            name=id_or_name, owners={owner}, reverse=True, limit=1
+            name=id_or_name,
+            owners={owner},
+            reverse=True,
+            limit=1,
+            cluster_name=cluster_name,
         ):
             log.debug(f"Job name '{id_or_name}' resolved to job ID '{job.id}'")
-            return job.id
+            return job.id, cluster_name
     except asyncio.CancelledError:
         raise
-    except Exception as e:
+    except ClientResponseError as e:
         log.error(
             f"Failed to resolve job-name {id_or_name_or_uri} resolved as "
             f"name={id_or_name}, owner={owner} to a job-ID: {e}"
@@ -465,7 +476,7 @@ async def resolve_job(
 
     if owner != default_user:
         raise ValueError(f"Failed to resolve job {id_or_name_or_uri}")
-    return id_or_name
+    return id_or_name, cluster_name
 
 
 DISK_ID_PATTERN = r"disk-[0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{12}"

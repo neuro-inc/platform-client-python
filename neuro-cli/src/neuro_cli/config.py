@@ -33,9 +33,10 @@ async def show(root: Root) -> None:
     """
     Print current settings.
     """
+    cluster_name = root.client.config.cluster_name
     fmt = ConfigFormatter()
     try:
-        jobs_capacity = await root.client.jobs.get_capacity()
+        jobs_capacity = await root.client.jobs.get_capacity(cluster_name=cluster_name)
     except ClientConnectionError:
         jobs_capacity = {}
     root.print(fmt(root.client.config, jobs_capacity))

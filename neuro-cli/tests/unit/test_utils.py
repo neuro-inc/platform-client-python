@@ -20,6 +20,7 @@ from neuro_cli.utils import (
     parse_permission_action,
     parse_resource_for_sharing,
     resolve_job,
+    resolve_job_ex,
 )
 
 from tests import _TestServerFactory
@@ -27,12 +28,12 @@ from tests import _TestServerFactory
 _MakeClient = Callable[..., Client]
 
 
-def _job_entry(job_id: str) -> Dict[str, Any]:
+def _job_entry(job_id: str, cluster_name: str = "default") -> Dict[str, Any]:
     return {
         "id": job_id,
         "owner": "job-owner",
-        "cluster_name": "default",
-        "uri": f"job://default/job-owner/{job_id}",
+        "cluster_name": cluster_name,
+        "uri": f"job://{cluster_name}/job-owner/{job_id}",
         "status": "running",
         "history": {
             "status": "running",
@@ -51,10 +52,18 @@ def _job_entry(job_id: str) -> Dict[str, Any]:
         "ssh_auth_server": "ssh://nobody@ssh-auth-dev.neu.ro:22",
         "scheduler_enabled": True,
         "pass_config": False,
-        "name": "job-name",
-        "internal_hostname": "job-id.default",
-        "internal_hostname_named": "job-name--job-owner.default",
+        "name": "my-job-name",
+        "internal_hostname": f"job-id.{cluster_name}",
+        "internal_hostname_named": f"my-job-name--job-owner.{cluster_name}",
     }
+
+
+def _check_params(request: web.Request, **expected: str) -> None:
+    # Since `resolve_job` excepts any Exception, `assert` will be caught there
+    for key, value in expected.items():
+        got = request.query.get(key)
+        if got != value:
+            pytest.fail(f"received: {key}={got!r} (expected {value!r})")
 
 
 async def test_resolve_job_id__from_string__no_jobs_found(
@@ -64,22 +73,14 @@ async def test_resolve_job_id__from_string__no_jobs_found(
     job_id = "job-81839be3-3ecf-4ec5-80d9-19b1588869db"
 
     async def handler(request: web.Request) -> web.Response:
-        # Since `resolve_job` excepts any Exception, `assert` will be caught there
-        name = request.query.get("name")
-        if name != job_id:
-            raise web.HTTPBadRequest(text=(f"received: name={name}"))
-        owner = request.query.get("owner")
-        if owner != "user":
-            raise web.HTTPBadRequest(text=(f"received: owner={owner}"))
-        reverse = request.query.get("reverse")
-        if reverse != "1":
-            raise web.HTTPBadRequest(text=(f"received: reverse={reverse}"))
-        limit = request.query.get("limit")
-        if limit != "1":
-            raise web.HTTPBadRequest(text=(f"received: limit={limit}"))
-        status = request.query.getall("status")
-        if status != ["running"]:
-            raise web.HTTPBadRequest(text=(f"received: status={status}"))
+        _check_params(
+            request,
+            name=job_id,
+            owner="user",
+            cluster_name="default",
+            reverse="1",
+            limit="1",
+        )
         return web.json_response(JSON)
 
     app = web.Application()
@@ -90,30 +91,30 @@ async def test_resolve_job_id__from_string__no_jobs_found(
     async with make_client(srv.make_url("/")) as client:
         resolved = await resolve_job(job_id, client=client, status={JobStatus.RUNNING})
         assert resolved == job_id
+        resolved_ex = await resolve_job_ex(
+            job_id, client=client, status={JobStatus.RUNNING}
+        )
+        assert resolved_ex == (job_id, "default")
 
 
+@pytest.mark.parametrize("cluster_name", ["default", "other"])
 async def test_resolve_job_id__from_uri_with_owner_same_user__no_jobs_found(
-    aiohttp_server: _TestServerFactory, make_client: _MakeClient
+    aiohttp_server: _TestServerFactory, make_client: _MakeClient, cluster_name: str
 ) -> None:
     job_owner = "user"
-    job_name = "job-name"
-    uri = f"job://default/{job_owner}/{job_name}"
+    job_name = "my-job-name"
+    uri = f"job://{cluster_name}/{job_owner}/{job_name}"
     JSON: Dict[str, Any] = {"jobs": []}
 
     async def handler(request: web.Request) -> web.Response:
-        # Since `resolve_job` excepts any Exception, `assert` will be caught there
-        name = request.query.get("name")
-        if name != job_name:
-            pytest.fail(f"received: {name}")
-        owner = request.query.get("owner")
-        if owner != job_owner:
-            pytest.fail(f"received: {owner}")
-        reverse = request.query.get("reverse")
-        if reverse != "1":
-            pytest.fail(f"received: reverse={reverse}")
-        limit = request.query.get("limit")
-        if limit != "1":
-            pytest.fail(f"received: limit={limit}")
+        _check_params(
+            request,
+            name=job_name,
+            owner=job_owner,
+            cluster_name=cluster_name,
+            reverse="1",
+            limit="1",
+        )
         return web.json_response(JSON)
 
     app = web.Application()
@@ -124,30 +125,29 @@ async def test_resolve_job_id__from_uri_with_owner_same_user__no_jobs_found(
     async with make_client(srv.make_url("/")) as client:
         resolved = await resolve_job(uri, client=client, status={JobStatus.RUNNING})
         assert resolved == job_name
+        resolved_ex = await resolve_job_ex(
+            uri, client=client, status={JobStatus.RUNNING}
+        )
+        assert resolved_ex == (job_name, cluster_name)
 
 
 async def test_resolve_job_id__from_uri_with_owner_other_user__no_jobs_found(
     aiohttp_server: _TestServerFactory, make_client: _MakeClient
 ) -> None:
     job_owner = "job-owner"
-    job_name = "job-name"
+    job_name = "my-job-name"
     uri = f"job://default/{job_owner}/{job_name}"
     JSON: Dict[str, Any] = {"jobs": []}
 
     async def handler(request: web.Request) -> web.Response:
-        # Since `resolve_job` excepts any Exception, `assert` will be caught there
-        name = request.query.get("name")
-        if name != job_name:
-            pytest.fail(f"received: {name}")
-        owner = request.query.get("owner")
-        if owner != job_owner:
-            pytest.fail(f"received: {owner}")
-        reverse = request.query.get("reverse")
-        if reverse != "1":
-            pytest.fail(f"received: reverse={reverse}")
-        limit = request.query.get("limit")
-        if limit != "1":
-            pytest.fail(f"received: limit={limit}")
+        _check_params(
+            request,
+            name=job_name,
+            owner=job_owner,
+            cluster_name="default",
+            reverse="1",
+            limit="1",
+        )
         return web.json_response(JSON)
 
     app = web.Application()
@@ -158,29 +158,26 @@ async def test_resolve_job_id__from_uri_with_owner_other_user__no_jobs_found(
     async with make_client(srv.make_url("/")) as client:
         with pytest.raises(ValueError):
             await resolve_job(uri, client=client, status={JobStatus.RUNNING})
+        with pytest.raises(ValueError):
+            await resolve_job_ex(uri, client=client, status={JobStatus.RUNNING})
 
 
 async def test_resolve_job_id__from_uri_without_owner__no_jobs_found(
     aiohttp_server: _TestServerFactory, make_client: _MakeClient
 ) -> None:
-    job_name = "job-name"
+    job_name = "my-job-name"
     uri = f"job:{job_name}"
     JSON: Dict[str, Any] = {"jobs": []}
 
     async def handler(request: web.Request) -> web.Response:
-        # Since `resolve_job` excepts any Exception, `assert` will be caught there
-        name = request.query.get("name")
-        if name != job_name:
-            pytest.fail(f"received: {name}")
-        owner = request.query.get("owner")
-        if owner != "user":
-            pytest.fail(f"received: {owner}")
-        reverse = request.query.get("reverse")
-        if reverse != "1":
-            pytest.fail(f"received: reverse={reverse}")
-        limit = request.query.get("limit")
-        if limit != "1":
-            pytest.fail(f"received: limit={limit}")
+        _check_params(
+            request,
+            name=job_name,
+            owner="user",
+            cluster_name="default",
+            reverse="1",
+            limit="1",
+        )
         return web.json_response(JSON)
 
     app = web.Application()
@@ -191,6 +188,10 @@ async def test_resolve_job_id__from_uri_without_owner__no_jobs_found(
     async with make_client(srv.make_url("/")) as client:
         resolved = await resolve_job(uri, client=client, status={JobStatus.RUNNING})
         assert resolved == job_name
+        resolved_ex = await resolve_job_ex(
+            uri, client=client, status={JobStatus.RUNNING}
+        )
+        assert resolved_ex == (job_name, "default")
 
 
 async def test_resolve_job_id__from_string__single_job_found(
@@ -201,19 +202,14 @@ async def test_resolve_job_id__from_string__single_job_found(
     JSON = {"jobs": [_job_entry(job_id)]}
 
     async def handler(request: web.Request) -> web.Response:
-        # Since `resolve_job` excepts any Exception, `assert` will be caught there
-        name = request.query.get("name")
-        if name != job_name:
-            pytest.fail(f"received: {name}")
-        owner = request.query.get("owner")
-        if owner != "user":
-            pytest.fail(f"received: {owner}")
-        reverse = request.query.get("reverse")
-        if reverse != "1":
-            pytest.fail(f"received: reverse={reverse}")
-        limit = request.query.get("limit")
-        if limit != "1":
-            pytest.fail(f"received: limit={limit}")
+        _check_params(
+            request,
+            name=job_name,
+            owner="user",
+            cluster_name="default",
+            reverse="1",
+            limit="1",
+        )
         return web.json_response(JSON)
 
     app = web.Application()
@@ -226,31 +222,31 @@ async def test_resolve_job_id__from_string__single_job_found(
             job_name, client=client, status={JobStatus.RUNNING}
         )
         assert resolved == job_id
+        resolved_ex = await resolve_job_ex(
+            job_name, client=client, status={JobStatus.RUNNING}
+        )
+        assert resolved_ex == (job_id, "default")
 
 
+@pytest.mark.parametrize("cluster_name", ["default", "other"])
 async def test_resolve_job_id__from_uri_with_owner__single_job_found(
-    aiohttp_server: _TestServerFactory, make_client: _MakeClient
+    aiohttp_server: _TestServerFactory, make_client: _MakeClient, cluster_name: str
 ) -> None:
     job_owner = "job-owner"
-    job_name = "job-name"
-    uri = f"job://default/{job_owner}/{job_name}"
+    job_name = "my-job-name"
+    uri = f"job://{cluster_name}/{job_owner}/{job_name}"
     job_id = "job-id-1"
-    JSON = {"jobs": [_job_entry(job_id)]}
+    JSON = {"jobs": [_job_entry(job_id, cluster_name=cluster_name)]}
 
     async def handler(request: web.Request) -> web.Response:
-        # Since `resolve_job` excepts any Exception, `assert` will be caught there
-        name = request.query.get("name")
-        if name != job_name:
-            pytest.fail(f"received: {name}")
-        owner = request.query.get("owner")
-        if owner != job_owner:
-            pytest.fail(f"received: {owner}")
-        reverse = request.query.get("reverse")
-        if reverse != "1":
-            pytest.fail(f"received: reverse={reverse}")
-        limit = request.query.get("limit")
-        if limit != "1":
-            pytest.fail(f"received: limit={limit}")
+        _check_params(
+            request,
+            name=job_name,
+            owner=job_owner,
+            cluster_name=cluster_name,
+            reverse="1",
+            limit="1",
+        )
         return web.json_response(JSON)
 
     app = web.Application()
@@ -261,30 +257,29 @@ async def test_resolve_job_id__from_uri_with_owner__single_job_found(
     async with make_client(srv.make_url("/")) as client:
         resolved = await resolve_job(uri, client=client, status={JobStatus.RUNNING})
         assert resolved == job_id
+        resolved_ex = await resolve_job_ex(
+            uri, client=client, status={JobStatus.RUNNING}
+        )
+        assert resolved_ex == (job_id, cluster_name)
 
 
 async def test_resolve_job_id__from_uri_without_owner__single_job_found(
     aiohttp_server: _TestServerFactory, make_client: _MakeClient
 ) -> None:
-    job_name = "job-name"
+    job_name = "my-job-name"
     uri = f"job:{job_name}"
     job_id = "job-id-1"
     JSON = {"jobs": [_job_entry(job_id)]}
 
     async def handler(request: web.Request) -> web.Response:
-        # Since `resolve_job` excepts any Exception, `assert` will be caught there
-        name = request.query.get("name")
-        if name != job_name:
-            pytest.fail(f"received: {name}")
-        owner = request.query.get("owner")
-        if owner != "user":
-            pytest.fail(f"received: {owner}")
-        reverse = request.query.get("reverse")
-        if reverse != "1":
-            pytest.fail(f"received: reverse={reverse}")
-        limit = request.query.get("limit")
-        if limit != "1":
-            pytest.fail(f"received: limit={limit}")
+        _check_params(
+            request,
+            name=job_name,
+            owner="user",
+            cluster_name="default",
+            reverse="1",
+            limit="1",
+        )
         return web.json_response(JSON)
 
     app = web.Application()
@@ -295,6 +290,10 @@ async def test_resolve_job_id__from_uri_without_owner__single_job_found(
     async with make_client(srv.make_url("/")) as client:
         resolved = await resolve_job(uri, client=client, status={JobStatus.RUNNING})
         assert resolved == job_id
+        resolved_ex = await resolve_job_ex(
+            uri, client=client, status={JobStatus.RUNNING}
+        )
+        assert resolved_ex == (job_id, "default")
 
 
 async def test_resolve_job_id__server_error(
@@ -304,19 +303,14 @@ async def test_resolve_job_id__server_error(
     job_name = job_id
 
     async def handler(request: web.Request) -> NoReturn:
-        # Since `resolve_job` excepts any Exception, `assert` will be caught there
-        name = request.query.get("name")
-        if name != job_name:
-            pytest.fail(f"received: {name}")
-        owner = request.query.get("owner")
-        if owner != "user":
-            pytest.fail(f"received: {owner}")
-        reverse = request.query.get("reverse")
-        if reverse != "1":
-            pytest.fail(f"received: reverse={reverse}")
-        limit = request.query.get("limit")
-        if limit != "1":
-            pytest.fail(f"received: limit={limit}")
+        _check_params(
+            request,
+            name=job_name,
+            owner="user",
+            cluster_name="default",
+            reverse="1",
+            limit="1",
+        )
         raise web.HTTPError()
 
     app = web.Application()
@@ -329,29 +323,29 @@ async def test_resolve_job_id__server_error(
             job_name, client=client, status={JobStatus.RUNNING}
         )
         assert resolved == job_id
+        resolved_ex = await resolve_job_ex(
+            job_name, client=client, status={JobStatus.RUNNING}
+        )
+        assert resolved_ex == (job_id, "default")
 
 
+@pytest.mark.parametrize("cluster_name", ["default", "other"])
 async def test_resolve_job_id__from_uri_with_owner_same_user__server_error(
-    aiohttp_server: _TestServerFactory, make_client: _MakeClient
+    aiohttp_server: _TestServerFactory, make_client: _MakeClient, cluster_name: str
 ) -> None:
     job_owner = "user"
-    job_name = "job-name"
-    uri = f"job://default/{job_owner}/{job_name}"
+    job_name = "my-job-name"
+    uri = f"job://{cluster_name}/{job_owner}/{job_name}"
 
     async def handler(request: web.Request) -> NoReturn:
-        # Since `resolve_job` excepts any Exception, `assert` will be caught there
-        name = request.query.get("name")
-        if name != job_name:
-            pytest.fail(f"received: {name}")
-        owner = request.query.get("owner")
-        if owner != job_owner:
-            pytest.fail(f"received: {owner}")
-        reverse = request.query.get("reverse")
-        if reverse != "1":
-            pytest.fail(f"received: reverse={reverse}")
-        limit = request.query.get("limit")
-        if limit != "1":
-            pytest.fail(f"received: limit={limit}")
+        _check_params(
+            request,
+            name=job_name,
+            owner=job_owner,
+            cluster_name=cluster_name,
+            reverse="1",
+            limit="1",
+        )
         raise web.HTTPError()
 
     app = web.Application()
@@ -362,29 +356,28 @@ async def test_resolve_job_id__from_uri_with_owner_same_user__server_error(
     async with make_client(srv.make_url("/")) as client:
         resolved = await resolve_job(uri, client=client, status={JobStatus.RUNNING})
         assert resolved == job_name
+        resolved_ex = await resolve_job_ex(
+            uri, client=client, status={JobStatus.RUNNING}
+        )
+        assert resolved_ex == (job_name, cluster_name)
 
 
 async def test_resolve_job_id__from_uri_with_owner_other_user__server_error(
     aiohttp_server: _TestServerFactory, make_client: _MakeClient
 ) -> None:
     job_owner = "job-owner"
-    job_name = "job-name"
+    job_name = "my-job-name"
     uri = f"job://default/{job_owner}/{job_name}"
 
     async def handler(request: web.Request) -> NoReturn:
-        # Since `resolve_job` excepts any Exception, `assert` will be caught there
-        name = request.query.get("name")
-        if name != job_name:
-            pytest.fail(f"received: {name}")
-        owner = request.query.get("owner")
-        if owner != job_owner:
-            pytest.fail(f"received: {owner}")
-        reverse = request.query.get("reverse")
-        if reverse != "1":
-            pytest.fail(f"received: reverse={reverse}")
-        limit = request.query.get("limit")
-        if limit != "1":
-            pytest.fail(f"received: limit={limit}")
+        _check_params(
+            request,
+            name=job_name,
+            owner=job_owner,
+            cluster_name="default",
+            reverse="1",
+            limit="1",
+        )
         raise web.HTTPError()
 
     app = web.Application()
@@ -395,28 +388,25 @@ async def test_resolve_job_id__from_uri_with_owner_other_user__server_error(
     async with make_client(srv.make_url("/")) as client:
         with pytest.raises(ValueError):
             await resolve_job(uri, client=client, status={JobStatus.RUNNING})
+        with pytest.raises(ValueError):
+            await resolve_job_ex(uri, client=client, status={JobStatus.RUNNING})
 
 
 async def test_resolve_job_id__from_uri_without_owner__server_error(
     aiohttp_server: _TestServerFactory, make_client: _MakeClient
 ) -> None:
-    job_name = "job-name"
+    job_name = "my-job-name"
     uri = f"job:{job_name}"
 
     async def handler(request: web.Request) -> NoReturn:
-        # Since `resolve_job` excepts any Exception, `assert` will be caught there
-        name = request.query.get("name")
-        if name != job_name:
-            pytest.fail(f"received: {name}")
-        owner = request.query.get("owner")
-        if owner != "user":
-            pytest.fail(f"received: {owner}")
-        reverse = request.query.get("reverse")
-        if reverse != "1":
-            pytest.fail(f"received: reverse={reverse}")
-        limit = request.query.get("limit")
-        if limit != "1":
-            pytest.fail(f"received: limit={limit}")
+        _check_params(
+            request,
+            name=job_name,
+            owner="user",
+            cluster_name="default",
+            reverse="1",
+            limit="1",
+        )
         raise web.HTTPError()
 
     app = web.Application()
@@ -427,13 +417,18 @@ async def test_resolve_job_id__from_uri_without_owner__server_error(
     async with make_client(srv.make_url("/")) as client:
         resolved = await resolve_job(uri, client=client, status={JobStatus.RUNNING})
         assert resolved == job_name
+        resolved_ex = await resolve_job_ex(
+            uri, client=client, status={JobStatus.RUNNING}
+        )
+        assert resolved_ex == (job_name, "default")
 
 
+@pytest.mark.parametrize(
+    "uri", ["job://default/user", "job://default/user/", "job:", "job://"]
+)
 async def test_resolve_job_id__from_uri__missing_job_id(
-    aiohttp_server: _TestServerFactory, make_client: _MakeClient
+    aiohttp_server: _TestServerFactory, make_client: _MakeClient, uri: str
 ) -> None:
-
-    uri = "job://default/job-name"
 
     app = web.Application()
     srv = await aiohttp_server(app)
@@ -441,16 +436,20 @@ async def test_resolve_job_id__from_uri__missing_job_id(
     async with make_client(srv.make_url("/")) as client:
         with pytest.raises(
             ValueError,
-            match="Invalid job URI: owner='job-name', missing job-id or job-name",
+            match="Invalid job URI: missing job-id or job-name",
         ):
             await resolve_job(uri, client=client, status={JobStatus.RUNNING})
+        with pytest.raises(
+            ValueError,
+            match="Invalid job URI: missing job-id or job-name",
+        ):
+            await resolve_job_ex(uri, client=client, status={JobStatus.RUNNING})
 
 
-async def test_resolve_job_id__from_uri__missing_job_id_2(
-    aiohttp_server: _TestServerFactory, make_client: _MakeClient
+@pytest.mark.parametrize("uri", ["job://default", "job://default/", "job:/", "job:///"])
+async def test_resolve_job_id__from_uri__missing_owner(
+    aiohttp_server: _TestServerFactory, make_client: _MakeClient, uri: str
 ) -> None:
-
-    uri = "job://job-name"
 
     app = web.Application()
     srv = await aiohttp_server(app)
@@ -458,9 +457,14 @@ async def test_resolve_job_id__from_uri__missing_job_id_2(
     async with make_client(srv.make_url("/")) as client:
         with pytest.raises(
             ValueError,
-            match="Invalid job URI: cluster_name != 'default'",
+            match="Invalid job URI: missing owner",
         ):
             await resolve_job(uri, client=client, status={JobStatus.RUNNING})
+        with pytest.raises(
+            ValueError,
+            match="Invalid job URI: missing owner",
+        ):
+            await resolve_job_ex(uri, client=client, status={JobStatus.RUNNING})
 
 
 def test_parse_file_resource_no_scheme(root: Root) -> None:

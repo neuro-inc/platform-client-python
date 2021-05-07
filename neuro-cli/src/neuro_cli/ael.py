@@ -74,10 +74,12 @@ class AttachHelper:
         self.action = InterruptAction.NOTHING
 
 
-async def process_logs(root: Root, job: str, helper: Optional[AttachHelper]) -> None:
+async def process_logs(
+    root: Root, job: str, helper: Optional[AttachHelper], *, cluster_name: Optional[str]
+) -> None:
     codec_info = codecs.lookup("utf8")
     decoder = codec_info.incrementaldecoder("replace")
-    async for chunk in root.client.jobs.monitor(job):
+    async for chunk in root.client.jobs.monitor(job, cluster_name=cluster_name):
         if not chunk:
             txt = decoder.decode(b"", final=True)
             if not txt:
@@ -96,41 +98,55 @@ async def process_logs(root: Root, job: str, helper: Optional[AttachHelper]) -> 
             sys.stdout.flush()
 
 
-async def process_exec(root: Root, job: str, cmd: str, tty: bool) -> NoReturn:
-    exec_id = await root.client.jobs.exec_create(job, cmd, tty=tty)
+async def process_exec(
+    root: Root, job: str, cmd: str, tty: bool, *, cluster_name: Optional[str]
+) -> NoReturn:
+    exec_id = await root.client.jobs.exec_create(
+        job, cmd, tty=tty, cluster_name=cluster_name
+    )
     try:
         if tty:
-            await _exec_tty(root, job, exec_id)
+            await _exec_tty(root, job, exec_id, cluster_name=cluster_name)
         else:
-            await _exec_non_tty(root, job, exec_id)
+            await _exec_non_tty(root, job, exec_id, cluster_name=cluster_name)
     finally:
         root.soft_reset_tty()
 
-    info = await root.client.jobs.exec_inspect(job, exec_id)
+    info = await root.client.jobs.exec_inspect(job, exec_id, cluster_name=cluster_name)
     with ExecStopProgress.create(
         console=root.console, quiet=root.quiet, job_id=job
     ) as progress:
         while info.running:
             await asyncio.sleep(0.2)
-            info = await root.client.jobs.exec_inspect(job, exec_id)
+            info = await root.client.jobs.exec_inspect(
+                job, exec_id, cluster_name=cluster_name
+            )
             if not progress(info.running):
                 sys.exit(EX_IOERR)
         sys.exit(info.exit_code)
 
 
-async def _exec_tty(root: Root, job: str, exec_id: str) -> None:
+async def _exec_tty(
+    root: Root, job: str, exec_id: str, *, cluster_name: Optional[str]
+) -> None:
     loop = asyncio.get_event_loop()
     helper = AttachHelper(quiet=True)
 
     stdout = create_output()
     h, w = stdout.get_size()
 
-    async with root.client.jobs.exec_start(job, exec_id) as stream:
+    async with root.client.jobs.exec_start(
+        job, exec_id, cluster_name=cluster_name
+    ) as stream:
         try:
-            await root.client.jobs.exec_resize(job, exec_id, w=w, h=h)
+            await root.client.jobs.exec_resize(
+                job, exec_id, w=w, h=h, cluster_name=cluster_name
+            )
         except IllegalArgumentError:
             pass
-        info = await root.client.jobs.exec_inspect(job, exec_id)
+        info = await root.client.jobs.exec_inspect(
+            job, exec_id, cluster_name=cluster_name
+        )
         if not info.running:
             # Exec session is finished
             sys.exit(info.exit_code)
@@ -143,12 +159,21 @@ async def _exec_tty(root: Root, job: str, exec_id: str) -> None:
         tasks.append(
             loop.create_task(
                 _process_resizing(
-                    functools.partial(root.client.jobs.exec_resize, job, exec_id),
+                    functools.partial(
+                        root.client.jobs.exec_resize,
+                        job,
+                        exec_id,
+                        cluster_name=cluster_name,
+                    ),
                     stdout,
                 )
             )
         )
-        tasks.append(loop.create_task(_exec_watcher(root, job, exec_id)))
+        tasks.append(
+            loop.create_task(
+                _exec_watcher(root, job, exec_id, cluster_name=cluster_name)
+            )
+        )
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
@@ -156,12 +181,18 @@ async def _exec_tty(root: Root, job: str, exec_id: str) -> None:
                 await root.cancel_with_logging(task)
 
 
-async def _exec_non_tty(root: Root, job: str, exec_id: str) -> None:
+async def _exec_non_tty(
+    root: Root, job: str, exec_id: str, *, cluster_name: Optional[str]
+) -> None:
     loop = asyncio.get_event_loop()
     helper = AttachHelper(quiet=True)
 
-    async with root.client.jobs.exec_start(job, exec_id) as stream:
-        info = await root.client.jobs.exec_inspect(job, exec_id)
+    async with root.client.jobs.exec_start(
+        job, exec_id, cluster_name=cluster_name
+    ) as stream:
+        info = await root.client.jobs.exec_inspect(
+            job, exec_id, cluster_name=cluster_name
+        )
         if not info.running:
             sys.exit(info.exit_code)
 
@@ -169,7 +200,11 @@ async def _exec_non_tty(root: Root, job: str, exec_id: str) -> None:
         if root.tty:
             tasks.append(loop.create_task(_process_stdin_non_tty(root, stream)))
         tasks.append(loop.create_task(_process_stdout_non_tty(root, stream, helper)))
-        tasks.append(loop.create_task(_exec_watcher(root, job, exec_id)))
+        tasks.append(
+            loop.create_task(
+                _exec_watcher(root, job, exec_id, cluster_name=cluster_name)
+            )
+        )
 
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -178,10 +213,14 @@ async def _exec_non_tty(root: Root, job: str, exec_id: str) -> None:
                 await root.cancel_with_logging(task)
 
 
-async def _exec_watcher(root: Root, job: str, exec_id: str) -> None:
+async def _exec_watcher(
+    root: Root, job: str, exec_id: str, *, cluster_name: Optional[str]
+) -> None:
     while True:
         try:
-            info = await root.client.jobs.exec_inspect(job, exec_id)
+            info = await root.client.jobs.exec_inspect(
+                job, exec_id, cluster_name=cluster_name
+            )
         except Exception:
             pass
         else:
@@ -237,14 +276,20 @@ async def _process_attach_single_try(
                 f"Port localhost:{local_port} will be forwarded to port {job_port}"
             )
             await stack.enter_async_context(
-                root.client.jobs.port_forward(job.id, local_port, job_port)
+                root.client.jobs.port_forward(
+                    job.id, local_port, job_port, cluster_name=job.cluster_name
+                )
             )
 
         try:
             if tty:
-                action = await _attach_tty(root, job.id, logs)
+                action = await _attach_tty(
+                    root, job.id, logs, cluster_name=job.cluster_name
+                )
             else:
-                action = await _attach_non_tty(root, job.id, logs)
+                action = await _attach_non_tty(
+                    root, job.id, logs, cluster_name=job.cluster_name
+                )
 
             with JobStopProgress.create(
                 console=root.console,
@@ -276,7 +321,9 @@ async def _process_attach_single_try(
         # Maybe it is spurious disconnect, and we should re-attach back?
         # Check container liveness by calling attach once
         try:
-            async with root.client.jobs.attach(job.id, stdin=True):
+            async with root.client.jobs.attach(
+                job.id, stdin=True, cluster_name=job.cluster_name
+            ):
                 raise RetryAttach
         except (asyncio.CancelledError, RetryAttach):
             raise
@@ -300,7 +347,9 @@ async def _process_attach_single_try(
             sys.exit(job.history.exit_code)
 
 
-async def _attach_tty(root: Root, job: str, logs: bool) -> InterruptAction:
+async def _attach_tty(
+    root: Root, job: str, logs: bool, *, cluster_name: Optional[str]
+) -> InterruptAction:
     if not root.quiet:
         root.print(JOB_STARTED_TTY, markup=True)
 
@@ -311,16 +360,18 @@ async def _attach_tty(root: Root, job: str, logs: bool) -> InterruptAction:
     h, w = stdout.get_size()
 
     if logs:
-        logs_printer = loop.create_task(process_logs(root, job, helper))
+        logs_printer = loop.create_task(
+            process_logs(root, job, helper, cluster_name=cluster_name)
+        )
     else:
         # Placeholder, prints nothing
         logs_printer = loop.create_task(asyncio.sleep(0))
 
     async with root.client.jobs.attach(
-        job, stdin=True, stdout=True, stderr=True, logs=True
+        job, stdin=True, stdout=True, stderr=True, logs=True, cluster_name=cluster_name
     ) as stream:
         try:
-            await root.client.jobs.resize(job, w=w, h=h)
+            await root.client.jobs.resize(job, w=w, h=h, cluster_name=cluster_name)
         except IllegalArgumentError:
             # Job may be finished at this moment.
             # Need to check job's status and print logs
@@ -343,7 +394,10 @@ async def _attach_tty(root: Root, job: str, logs: bool) -> InterruptAction:
         tasks.append(
             loop.create_task(
                 _process_resizing(
-                    functools.partial(root.client.jobs.resize, job), stdout
+                    functools.partial(
+                        root.client.jobs.resize, job, cluster_name=cluster_name
+                    ),
+                    stdout,
                 )
             )
         )
@@ -486,7 +540,9 @@ async def _process_stdout_tty(
             stdout.flush()
 
 
-async def _attach_non_tty(root: Root, job: str, logs: bool) -> InterruptAction:
+async def _attach_non_tty(
+    root: Root, job: str, logs: bool, *, cluster_name: Optional[str]
+) -> InterruptAction:
     if not root.quiet:
         s = JOB_STARTED_NEURO_HAS_NO_TTY
         if root.tty:
@@ -497,13 +553,15 @@ async def _attach_non_tty(root: Root, job: str, logs: bool) -> InterruptAction:
     helper = AttachHelper(quiet=root.quiet)
 
     if logs:
-        logs_printer = loop.create_task(process_logs(root, job, helper))
+        logs_printer = loop.create_task(
+            process_logs(root, job, helper, cluster_name=cluster_name)
+        )
     else:
         # Placeholder, prints nothing
         logs_printer = loop.create_task(asyncio.sleep(0))
 
     async with root.client.jobs.attach(
-        job, stdin=True, stdout=True, stderr=True, logs=True
+        job, stdin=True, stdout=True, stderr=True, logs=True, cluster_name=cluster_name
     ) as stream:
         status = await root.client.jobs.status(job)
         if status.history.exit_code is not None:

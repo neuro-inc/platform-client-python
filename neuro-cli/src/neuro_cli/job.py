@@ -79,6 +79,7 @@ from .utils import (
     group,
     option,
     resolve_job,
+    resolve_job_ex,
     volume_to_verbose_str,
 )
 
@@ -150,7 +151,7 @@ async def exec(
     neuro exec --no-tty my-job ls -l
     """
     real_cmd = _parse_cmd(cmd)
-    job = await resolve_job(
+    job, cluster_name = await resolve_job_ex(
         job,
         client=root.client,
         status=JobStatus.active_items(),
@@ -158,7 +159,7 @@ async def exec(
     if tty is None:
         tty = root.tty
     _check_tty(root, tty)
-    await process_exec(root, job, real_cmd, tty)
+    await process_exec(root, job, real_cmd, tty, cluster_name=cluster_name)
 
 
 @command()
@@ -205,7 +206,7 @@ async def port_forward(
             fg="red",
             err=True,
         )
-    job_id = await resolve_job(
+    job_id, cluster_name = await resolve_job_ex(
         job,
         client=root.client,
         status=JobStatus.active_items(),
@@ -217,7 +218,9 @@ async def port_forward(
                 f"to port {job_port} of {job_id}"
             )
             await stack.enter_async_context(
-                root.client.jobs.port_forward(job_id, local_port, job_port)
+                root.client.jobs.port_forward(
+                    job_id, local_port, job_port, cluster_name=cluster_name
+                )
             )
 
         root.print("Press ^C to stop forwarding")
@@ -234,12 +237,12 @@ async def logs(root: Root, job: str) -> None:
     """
     Print the logs for a job.
     """
-    id = await resolve_job(
+    id, cluster_name = await resolve_job_ex(
         job,
         client=root.client,
         status=JobStatus.items(),
     )
-    await process_logs(root, id, None)
+    await process_logs(root, id, None, cluster_name=cluster_name)
 
 
 @command()
@@ -270,7 +273,13 @@ async def attach(root: Root, job: str, port_forward: List[Tuple[int, int]]) -> N
     tty = status.container.tty
     _check_tty(root, tty)
 
-    await process_attach(root, status, tty=tty, logs=False, port_forward=port_forward)
+    await process_attach(
+        root,
+        status,
+        tty=tty,
+        logs=False,
+        port_forward=port_forward,
+    )
 
 
 @command()
@@ -390,6 +399,7 @@ async def ls(
         owners.remove("ME")
         owners.add(root.client.config.username)
     tags = set(tag)
+    cluster_name = root.client.config.cluster_name
     jobs = root.client.jobs.list(
         statuses=statuses,
         name=name,
@@ -398,6 +408,7 @@ async def ls(
         since=_parse_date(since),
         until=_parse_date(until),
         reverse=recent_first,
+        cluster_name=cluster_name,
     )
 
     # client-side filtering
@@ -621,6 +632,7 @@ async def top(
 
     sort_keys = parse_sort_keys(sort)
     format = await calc_top_columns(root.client, format)
+    cluster_name = root.client.config.cluster_name
 
     observed: Set[str] = set()
     loop = asyncio.get_event_loop()
@@ -676,6 +688,7 @@ async def top(
                     tags=tags,
                     since=since_dt,
                     until=until_dt,
+                    cluster_name=cluster_name,
                 )
 
                 # client-side filtering
@@ -699,7 +712,9 @@ async def top(
 
     async def poller(job: JobDescription) -> None:
         try:
-            async for info in root.client.jobs.top(job.id):
+            async for info in root.client.jobs.top(
+                job.id, cluster_name=job.cluster_name
+            ):
                 formatter.update(job, info)
                 await asyncio.sleep(0)
         except ValueError:
@@ -748,14 +763,16 @@ async def save(root: Root, job: str, image: RemoteImage) -> None:
     neuro job save my-favourite-job image:ubuntu-patched:v1
     neuro job save my-favourite-job image://bob/ubuntu-patched
     """
-    id = await resolve_job(
+    id, cluster_name = await resolve_job_ex(
         job,
         client=root.client,
         status=JobStatus.items(),
     )
     progress = DockerImageProgress.create(console=root.console, quiet=root.quiet)
     with contextlib.closing(progress):
-        await root.client.jobs.save(id, image, progress=progress)
+        await root.client.jobs.save(
+            id, image, progress=progress, cluster_name=cluster_name
+        )
     root.print(image)
 
 
@@ -1063,6 +1080,7 @@ async def run(
         schedule_timeout=schedule_timeout,
         privileged=privileged,
         share=share,
+        cluster_name=root.client.cluster_name,
     )
 
 
@@ -1136,6 +1154,7 @@ async def run_job(
     schedule_timeout: Optional[str],
     privileged: bool,
     share: Sequence[str],
+    cluster_name: str,
 ) -> JobDescription:
     if http_auth is None:
         http_auth = True
@@ -1205,7 +1224,7 @@ async def run_job(
                 f"{old_env_name} is already set to {env_dict[old_env_name]}"
             )
 
-        env_var, secret_volume = await upload_and_map_config(root)
+        env_var, secret_volume = await upload_and_map_config(root, cluster_name)
         env_dict[old_env_name] = env_var
         volumes.append(secret_volume)
         # End of compatibility layer
@@ -1260,7 +1279,13 @@ async def run_job(
         await browse_job(root, job)
 
     if not detach:
-        await process_attach(root, job, tty=tty, logs=True, port_forward=port_forward)
+        await process_attach(
+            root,
+            job,
+            tty=tty,
+            logs=True,
+            port_forward=port_forward,
+        )
 
     return job
 
@@ -1273,13 +1298,13 @@ def _parse_cmd(cmd: Sequence[str]) -> str:
     return real_cmd
 
 
-async def upload_and_map_config(root: Root) -> Tuple[str, Volume]:
+async def upload_and_map_config(root: Root, cluster_name: str) -> Tuple[str, Volume]:
 
     # store the Neuro CLI config on the storage under some random path
     nmrc_path = URL(root.config_path.expanduser().resolve().as_uri())
     random_nmrc_filename = f"{uuid.uuid4()}-cfg"
     storage_nmrc_folder = URL(
-        f"storage://{root.client.cluster_name}/{root.client.username}/.neuro/"
+        f"storage://{cluster_name}/{root.client.username}/.neuro/"
     )
     storage_nmrc_path = storage_nmrc_folder / random_nmrc_filename
     local_nmrc_folder = f"{STORAGE_MOUNTPOINT}/.neuro/"

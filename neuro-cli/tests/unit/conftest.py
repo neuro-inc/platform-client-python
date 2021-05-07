@@ -59,6 +59,21 @@ def nmrc_path(tmp_path: Path, token: str, auth_config: _AuthConfig) -> Path:
         },
         name="default",
     )
+    cluster2_config = Cluster(
+        registry_url=URL("https://registry2-dev.neu.ro"),
+        storage_url=URL("https://storage2-dev.neu.ro"),
+        blob_storage_url=URL("https://blob-storage2-dev.neu.ro"),
+        users_url=URL("https://users2-dev.neu.ro"),
+        monitoring_url=URL("https://monitoring2-dev.neu.ro"),
+        secrets_url=URL("https://secrets2-dev.neu.ro"),
+        disks_url=URL("https://disks2-dev.neu.ro"),
+        presets={
+            "cpu-small": Preset(
+                credits_per_hour=Decimal("10"), cpu=7, memory_mb=2 * 1024
+            ),
+        },
+        name="other",
+    )
     config = _ConfigData(
         auth_config=auth_config,
         auth_token=_AuthToken.create_non_expiring(token),
@@ -66,7 +81,10 @@ def nmrc_path(tmp_path: Path, token: str, auth_config: _AuthConfig) -> Path:
         admin_url=URL("https://dev.neu.ro/apis/admin/v1"),
         version=__version__,
         cluster_name="default",
-        clusters={cluster_config.name: cluster_config},
+        clusters={
+            cluster_config.name: cluster_config,
+            cluster2_config.name: cluster2_config,
+        },
     )
     Factory(nmrc_path)._save(config)
     return nmrc_path

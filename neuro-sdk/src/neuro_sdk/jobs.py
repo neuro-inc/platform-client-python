@@ -272,6 +272,11 @@ class Jobs(metaclass=NoPublicConstructor):
         self._config = config
         self._parse = parse
 
+    def _get_monitoring_url(self, cluster_name: Optional[str]) -> URL:
+        if cluster_name is None:
+            cluster_name = self._config.cluster_name
+        return self._config.get_cluster(cluster_name).monitoring_url
+
     async def run(
         self,
         container: Container,
@@ -391,6 +396,7 @@ class Jobs(metaclass=NoPublicConstructor):
         until: Optional[datetime] = None,
         reverse: bool = False,
         limit: Optional[int] = None,
+        cluster_name: Optional[str] = None,
     ) -> AsyncIterator[JobDescription]:
         url = self._config.api_url / "jobs"
         headers = {"Accept": "application/x-ndjson"}
@@ -412,7 +418,9 @@ class Jobs(metaclass=NoPublicConstructor):
             if until.tzinfo is None:
                 until = until.astimezone(timezone.utc)
             params.add("until", until.isoformat())
-        params["cluster_name"] = self._config.cluster_name
+        if cluster_name is None:
+            cluster_name = self._config.cluster_name
+        params["cluster_name"] = cluster_name
         if reverse:
             params.add("reverse", "1")
         if limit is not None:
@@ -449,8 +457,10 @@ class Jobs(metaclass=NoPublicConstructor):
             # an error is raised for status >= 400
             return None  # 201 status code
 
-    async def monitor(self, id: str) -> AsyncIterator[bytes]:
-        url = self._config.monitoring_url / id / "log"
+    async def monitor(
+        self, id: str, *, cluster_name: Optional[str] = None
+    ) -> AsyncIterator[bytes]:
+        url = self._get_monitoring_url(cluster_name) / id / "log"
         timeout = attr.evolve(self._core.timeout, sock_read=None)
         auth = await self._config._api_auth()
         async with self._core.request(
@@ -477,8 +487,10 @@ class Jobs(metaclass=NoPublicConstructor):
             ret = await resp.json()
             return ret["tags"]
 
-    async def top(self, id: str) -> AsyncIterator[JobTelemetry]:
-        url = self._config.monitoring_url / id / "top"
+    async def top(
+        self, id: str, *, cluster_name: Optional[str] = None
+    ) -> AsyncIterator[JobTelemetry]:
+        url = self._get_monitoring_url(cluster_name) / id / "top"
         auth = await self._config._api_auth()
         try:
             received_any = False
@@ -498,6 +510,7 @@ class Jobs(metaclass=NoPublicConstructor):
         image: RemoteImage,
         *,
         progress: Optional[AbstractDockerImageProgress] = None,
+        cluster_name: Optional[str] = None,
     ) -> None:
         if not _is_in_neuro_registry(image):
             raise ValueError(f"Image `{image}` must be in the neuro registry")
@@ -505,7 +518,7 @@ class Jobs(metaclass=NoPublicConstructor):
             progress = _DummyProgress()
 
         payload = {"container": {"image": _as_repo_str(image)}}
-        url = self._config.monitoring_url / id / "save"
+        url = self._get_monitoring_url(cluster_name) / id / "save"
 
         auth = await self._config._api_auth()
         timeout = attr.evolve(self._core.timeout, sock_read=None)
@@ -556,10 +569,13 @@ class Jobs(metaclass=NoPublicConstructor):
         writer: asyncio.StreamWriter,
         id: str,
         job_port: int,
+        *,
+        cluster_name: Optional[str] = None,
     ) -> None:
         try:
             loop = asyncio.get_event_loop()
-            url = self._config.monitoring_url / id / "port_forward" / str(job_port)
+            url = self._get_monitoring_url(cluster_name)
+            url = url / id / "port_forward" / str(job_port)
             auth = await self._config._api_auth()
             ws = await self._core._session.ws_connect(
                 url,
@@ -624,8 +640,9 @@ class Jobs(metaclass=NoPublicConstructor):
         stdout: bool = False,
         stderr: bool = False,
         logs: bool = False,
+        cluster_name: Optional[str] = None,
     ) -> AsyncIterator[StdStream]:
-        url = self._config.monitoring_url / id / "attach"
+        url = self._get_monitoring_url(cluster_name) / id / "attach"
         url = url.with_query(
             stdin=str(int(stdin)),
             stdout=str(int(stdout)),
@@ -646,14 +663,23 @@ class Jobs(metaclass=NoPublicConstructor):
         finally:
             await ws.close()
 
-    async def resize(self, id: str, *, w: int, h: int) -> None:
-        url = self._config.monitoring_url / id / "resize"
+    async def resize(
+        self, id: str, *, w: int, h: int, cluster_name: Optional[str] = None
+    ) -> None:
+        url = self._get_monitoring_url(cluster_name) / id / "resize"
         url = url.with_query(w=w, h=h)
         auth = await self._config._api_auth()
         async with self._core.request("POST", url, auth=auth):
             pass
 
-    async def exec_create(self, id: str, cmd: str, *, tty: bool = False) -> str:
+    async def exec_create(
+        self,
+        id: str,
+        cmd: str,
+        *,
+        tty: bool = False,
+        cluster_name: Optional[str] = None,
+    ) -> str:
         payload = {
             "command": cmd,
             "stdin": True,
@@ -661,21 +687,31 @@ class Jobs(metaclass=NoPublicConstructor):
             "stderr": True,
             "tty": tty,
         }
-        url = self._config.monitoring_url / id / "exec_create"
+        url = self._get_monitoring_url(cluster_name) / id / "exec_create"
         auth = await self._config._api_auth()
         async with self._core.request("POST", url, json=payload, auth=auth) as resp:
             ret = await resp.json()
             return ret["exec_id"]
 
-    async def exec_resize(self, id: str, exec_id: str, *, w: int, h: int) -> None:
-        url = self._config.monitoring_url / id / exec_id / "exec_resize"
+    async def exec_resize(
+        self,
+        id: str,
+        exec_id: str,
+        *,
+        w: int,
+        h: int,
+        cluster_name: Optional[str] = None,
+    ) -> None:
+        url = self._get_monitoring_url(cluster_name) / id / exec_id / "exec_resize"
         url = url.with_query(w=w, h=h)
         auth = await self._config._api_auth()
         async with self._core.request("POST", url, auth=auth) as resp:
             resp
 
-    async def exec_inspect(self, id: str, exec_id: str) -> ExecInspect:
-        url = self._config.monitoring_url / id / exec_id / "exec_inspect"
+    async def exec_inspect(
+        self, id: str, exec_id: str, *, cluster_name: Optional[str] = None
+    ) -> ExecInspect:
+        url = self._get_monitoring_url(cluster_name) / id / exec_id / "exec_inspect"
         auth = await self._config._api_auth()
         async with self._core.request("GET", url, auth=auth) as resp:
             data = await resp.json()
@@ -690,8 +726,10 @@ class Jobs(metaclass=NoPublicConstructor):
             )
 
     @asynccontextmanager
-    async def exec_start(self, id: str, exec_id: str) -> AsyncIterator[StdStream]:
-        url = self._config.monitoring_url / id / exec_id / "exec_start"
+    async def exec_start(
+        self, id: str, exec_id: str, *, cluster_name: Optional[str] = None
+    ) -> AsyncIterator[StdStream]:
+        url = self._get_monitoring_url(cluster_name) / id / exec_id / "exec_start"
         auth = await self._config._api_auth()
 
         ws = await self._core._session.ws_connect(
@@ -707,15 +745,19 @@ class Jobs(metaclass=NoPublicConstructor):
         finally:
             await ws.close()
 
-    async def send_signal(self, id: str, signal: Union[str, int]) -> None:
-        url = self._config.monitoring_url / id / "kill"
+    async def send_signal(
+        self, id: str, signal: Union[str, int], *, cluster_name: Optional[str] = None
+    ) -> None:
+        url = self._get_monitoring_url(cluster_name) / id / "kill"
         url = url.with_query(signal=signal)
         auth = await self._config._api_auth()
         async with self._core.request("POST", url, auth=auth) as resp:
             resp
 
-    async def get_capacity(self) -> Mapping[str, int]:
-        url = self._config.monitoring_url / "capacity"
+    async def get_capacity(
+        self, *, cluster_name: Optional[str] = None
+    ) -> Mapping[str, int]:
+        url = self._get_monitoring_url(cluster_name) / "capacity"
         auth = await self._config._api_auth()
         async with self._core.request("GET", url, auth=auth) as resp:
             return await resp.json()

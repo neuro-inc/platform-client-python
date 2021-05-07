@@ -21,6 +21,7 @@ Jobs
                       stdin: bool = False, \
                       stdout: bool = False, \
                       stderr: bool = False, \
+                      cluster_name: Optional[str] = None, \
                  ) -> AsyncContextManager[StdStream]
       :async-with:
 
@@ -34,11 +35,16 @@ Jobs
 
       :param bool stderr: ``True`` to attach stderr, default is ``False``.
 
+      :param str cluster_name: cluster on which the job is running.
+
+                               ``None`` means the current cluster (default).
+
       :return: Asynchronous context manager which can be used to access
                stdin/stdout/stderr, see :class:`StdStream` for details.
 
    .. comethod:: exec_create(id: str, cmd: List[str], *, \
                       tty: bool = False, \
+                      cluster_name: Optional[str] = None, \
                  ) -> str
 
       Create an exec session to run a command in a running job.
@@ -51,9 +57,15 @@ Jobs
       :param bool tty: ``True`` if :term:`tty` mode is requested, default is
                        ``False``.
 
+      :param str cluster_name: cluster on which the job is running.
+
+                               ``None`` means the current cluster (default).
+
       :return: Exec session id (:class:`str`).
 
-   .. comethod:: exec_inspect(id: str, exec_id: str) -> ExecInspect
+   .. comethod:: exec_inspect(id: str, exec_id: str, *. \
+                              cluster_name: Optional[str] = None, \
+                 ) -> ExecInspect
 
       Get exec session info.
 
@@ -75,7 +87,13 @@ Jobs
 
       :param int h: New screen height.
 
-   .. comethod:: exec_start(id: str, exec_id: str) -> StdStream
+      :param str cluster_name: cluster on which the job is running.
+
+                               ``None`` means the current cluster (default).
+
+   .. comethod:: exec_start(id: str, exec_id: str, *, \
+                            cluster_name: Optional[str] = None, \
+                 ) -> StdStream
       :async-with:
 
       Start an exec session, get access to session's stdin/stdout/stderr.
@@ -84,12 +102,18 @@ Jobs
 
       :param str exec_id: exec id.
 
+      :param str cluster_name: cluster on which the job is running.
+
+                               ``None`` means the current cluster (default).
+
       :return: Asynchronous context manager which can be used to access
                stdin/stdout/stderr, see :class:`StdStream` for details.
 
-   .. comethod:: get_capacity() -> Mapping[str, int]
+   .. comethod:: get_capacity(*, \
+                             cluster_name: Optional[str] = None, \
+                 ) -> Mapping[str, int]
 
-      Get counts of available job for current cluster for each available preset.
+      Get counts of available job for specified cluster for each available preset.
 
       The returned numbers reflect the remaining *cluster capacity*. In other words, it
       displays how many concurrent jobs for each preset can be started at the moment of
@@ -97,6 +121,10 @@ Jobs
 
       The returned capacity is an approximation, the real value can differ if already
       running jobs are finished or another user starts own jobs at the same time.
+
+      :param str cluster_name: cluster for which the request is performed.
+
+                               ``None`` means the current cluster (default).
 
       :return: A mapping of *preset_name* to *count*, where *count* is a number of
                concurrent jobs that can be executed using *preset_name*.
@@ -115,6 +143,7 @@ Jobs
                       until: Optional[datetime] = None, \
                       reverse: bool = False, \
                       limit: Optional[int] = None, \
+                      cluster_name: Optional[str] = None, \
                  ) -> AsyncIterator[JobDescription]
       :async-for:
 
@@ -181,10 +210,16 @@ Jobs
 
                         ``None`` means no limit (default).
 
+      :param str cluster_name: list jobs on specified cluster.
+
+                               ``None`` means the current cluster (default).
+
       :return: asynchronous iterator which emits :class:`JobDescription` objects.
 
 
-   .. comethod:: monitor(id: str) -> AsyncIterator[bytes]
+   .. comethod:: monitor(id: str, *, \
+                         cluster_name: Optional[str] = None, \
+                 ) -> AsyncIterator[bytes]
       :async-for:
 
       Get job logs as a sequence of data chunks, e.g.::
@@ -194,11 +229,16 @@ Jobs
 
       :param str id: job :attr:`~JobDescription.id` to retrieve logs.
 
+      :param str cluster_name: cluster on which the job is running.
+
+                               ``None`` means the current cluster (default).
+
       :return: :class:`~collections.abc.AsyncIterator` over :class:`bytes` log chunks.
 
 
    .. comethod:: port_forward(id: str, local_port: int, job_port: int, *, \
-                              no_key_check: bool = False \
+                              no_key_check: bool = False, \
+                              cluster_name: Optional[str] = None \
                  ) -> None
       :async-with:
 
@@ -213,7 +253,14 @@ Jobs
 
       :param int jot_port: remote TCP port in a job to forward.
 
-   .. comethod:: resize(id: str, *, w: int, h: int) -> None
+      :param str cluster_name: cluster on which the job is running.
+
+                               ``None`` means the current cluster (default).
+
+   .. comethod:: resize(id: str, *, \
+                        w: int, h: int, \
+                        cluster_name: Optional[str] = None, \
+                 ) -> None
 
       Resize existing TTY job.
 
@@ -222,6 +269,10 @@ Jobs
       :param int w: New screen width.
 
       :param int h: New screen height.
+
+      :param str cluster_name: cluster on which the job is running.
+
+                               ``None`` means the current cluster (default).
 
    .. comethod:: run(container: Container, \
                      *, \
@@ -365,7 +416,9 @@ Jobs
 
       :return: :class:`JobDescription` instance with information about started job.
 
-   .. comethod:: send_signal(id: str, signal: Union[str, int]) -> None
+   .. comethod:: send_signal(id: str, signal: Union[str, int], *, \
+                             cluster_name: Optional[str] = None, \
+                 ) -> None
 
       Send signal to a job.
 
@@ -374,6 +427,10 @@ Jobs
       :param signal: The signal number or literal name, e.g. ``9`` or ``"SIGKILL"``. See
                      https://www.man7.org/linux/man-pages/man7/signal.7.html for more
                      details about signal types.
+
+      :param str cluster_name: cluster on which the job is running.
+
+                               ``None`` means the current cluster (default).
 
    .. comethod:: status(id: str) -> JobDescription
 
@@ -389,7 +446,9 @@ Jobs
 
       :return: :class:`List[str]` list of tags.
 
-   .. comethod:: top(id: str) -> AsyncIterator[JobTelemetry]
+   .. comethod:: top(id: str, *, \
+                     cluster_name: Optional[str] = None, \
+                 ) -> AsyncIterator[JobTelemetry]
       :async-for:
 
       Get job usage statistics, e.g.::
@@ -398,6 +457,10 @@ Jobs
               print(data.cpu, data.memory)
 
       :param str id: job :attr:`~JobDescription.id` to get telemetry data.
+
+      :param str cluster_name: cluster on which the job is running.
+
+                               ``None`` means the current cluster (default).
 
       :return: asynchronous iterator which emits `JobTelemetry` objects periodically.
 

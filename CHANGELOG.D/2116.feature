@@ -1,0 +1,1 @@
+All job related commands support now jobs on other clusters. Commands `neuro exec`, `neuro port-forward`, `neuro logs` and `neuro job save` only support jobs on other clusters if they are specified by URI (jobs on the current cluster can be also specified by bare ID or name).
